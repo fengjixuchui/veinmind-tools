@@ -1,17 +1,24 @@
+#!/usr/bin/env python3
 from veinmind import *
-import click
-import os
+import os, sys
 import re
-import jsonpickle
 import pytoml as toml
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "../veinmind-common/python/service"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "./veinmind-common/python/service"))
+from report import *
+
+report_list = []
+instruct_set = (
+    "FROM", "CMD", "RUN", "LABEL", "MAINTAINER", "EXPOSE", "ENV", "ADD", "COPY", "ENTRYPOINT", "VOLUME", "USER",
+    "WORKDIR",
+    "ARG", "ONBUILD", "STOPSIGNAL", "HEALTHCHECK", "SHELL")
+
 
 def load_rules():
     global rules
     with open(os.path.join(os.path.abspath(os.path.dirname(__file__)), "rules.toml"), encoding="utf8") as f:
         rules = toml.load(f)
-
-
-instruct_set = ("FROM", "CMD", "RUN", "LABEL", "MAINTAINER", "EXPOSE", "ENV", "ADD", "COPY", "ENTRYPOINT", "VOLUME", "USER", "WORKDIR", "ARG", "ONBUILD", "STOPSIGNAL", "HEALTHCHECK", "SHELL")
 
 
 def tab_print(printstr: str):
@@ -30,101 +37,132 @@ def tab_print(printstr: str):
         print(("| " + printstr_temp + "\t|").expandtabs(100))
 
 
-class Report():
-    def __init__(self):
-        self.imagename = ""
-        self.abnormal_history_list = []
-
-
-@click.command()
-@click.option('--engine',default="docker", help="engine type you use, e.g. docker/containerd")
-@click.option('--name', default="", help="image name e.g. ubuntu:latest")
-@click.option('--output', default="stdout", help="output format e.g. stdout/json")
-def cli(engine, name, output):
+@command.group()
+@command.option("--output", default="stdout", help="output format e.g. stdout/json")
+def cli(output):
     load_rules()
-    report_list = []
-    with runtime(engine) as client:
-        if name != "":
-            image_ids = client.find_image_ids(name)
-        else:
-            image_ids = client.list_image_ids()
+    pass
 
-        for id in image_ids:
-            report = Report()
-            image = client.open_image_by_id(id)
-            refs = image.reporefs()
-            if len(refs) > 0:
-                ref = refs[0]
-            else:
-                ref = image.id()
-            report.imagename = ref
-            ocispec = image.ocispec_v1()
-            if 'history' in ocispec.keys() and len(ocispec['history']) > 0:
-                for history in ocispec['history']:
-                    if 'created_by' in history.keys():
-                        created_by = history['created_by']
-                        created_by_split = created_by.split("#(nop)")
-                        if len(created_by_split) > 1:
-                            command = "#(nop)".join(created_by_split[1:])
-                            command = command.lstrip()
-                            command_split = command.split()
-                            if len(command_split) == 2:
-                                instruct = command_split[0]
-                                command_content = command_split[1]
-                                for r in rules["rules"]:
-                                    if r["instruct"] == instruct:
-                                        if re.match(r["match"], command_content):
-                                            report.abnormal_history_list.append(created_by)
-                                            break
-                            else:
-                                instruct = command_split[0]
-                                command_content = " ".join(command_split[1:])
-                                for r in rules["rules"]:
-                                    if r["instruct"] == instruct:
-                                        if re.match(r["match"], command_content):
-                                            report.abnormal_history_list.append(created_by)
-                                            break
-                        else:
-                            command_split = created_by.split()
-                            if command_split[0] in instruct_set:
-                                for r in rules["rules"]:
-                                    if r["instruct"] == command_split[0]:
-                                        if re.match(r["match"], " ".join(command_split[1:])):
-                                            report.abnormal_history_list.append(created_by)
-                                            break
-                            else:
-                                for r in rules["rules"]:
-                                    if r["instruct"] == "RUN":
-                                        if re.match(r["match"], created_by):
-                                            report.abnormal_history_list.append(created_by)
-                                            break
-            report_list.append(report)
 
-        if output == "stdout" and len(report_list) > 0:
-            print("# ================================================================================================= #")
-            tab_print("Scan Image Total: " + str(len(report_list)))
-            tab_print("Unsafe Image List: ")
-            for r in report_list:
-                if len(r.abnormal_history_list) == 0:
-                    continue
-                print("+---------------------------------------------------------------------------------------------------+")
-                tab_print("ImageName: " + r.imagename)
-                tab_print("Abnormal History Total: " + str(len(r.abnormal_history_list)))
-                for history in r.abnormal_history_list:
-                    tab_print("History: " + history)
-            print("+---------------------------------------------------------------------------------------------------+")
-        elif output == "json":
-            with open("output.json", mode="w") as f:
-                f.write(jsonpickle.dumps(report_list))
-
-def runtime(engine):
-    if engine == "docker":
-        return docker.Docker()
-    elif engine == "containerd":
-        return containerd.Containerd()
+@cli.image_command()
+def scan_images(image):
+    """scan image abnormal history instruction"""
+    image_report = None
+    refs = image.reporefs()
+    if len(refs) > 0:
+        ref = refs[0]
     else:
-        raise Exception("engine type doesn't match")
+        ref = image.id()
+    log.info("start scan: " + ref)
+
+    ocispec = image.ocispec_v1()
+    if 'history' in ocispec.keys() and len(ocispec['history']) > 0:
+        for history in ocispec['history']:
+            if 'created_by' in history.keys():
+                created_by = history['created_by']
+                created_by_split = created_by.split("#(nop)")
+                if len(created_by_split) > 1:
+                    command = "#(nop)".join(created_by_split[1:])
+                    command = command.lstrip()
+                    command_split = command.split()
+                    if len(command_split) == 2:
+                        instruct = command_split[0]
+                        command_content = command_split[1]
+                        for r in rules["rules"]:
+                            if r["instruct"] == instruct:
+                                if re.match(r["match"], command_content):
+                                    detail = AlertDetail()
+                                    detail.history_detail = HistoryDetail(
+                                                              instruction=instruct, content=command_content,
+                                                              description=r["match"]
+                                                          )
+                                    image_report = ReportEvent(id=image.id(),
+                                                          level=Level.High.value, detect_type=DetectType.Image.value,
+                                                          event_type=EventType.Risk.value,
+                                                          alert_type=AlertType.AbnormalHistory.value,
+                                                          alert_details=[detail])
+                                    report(image_report)
+                                    break
+                    else:
+                        instruct = command_split[0]
+                        command_content = " ".join(command_split[1:])
+                        for r in rules["rules"]:
+                            if r["instruct"] == instruct:
+                                if re.match(r["match"], command_content):
+                                    detail = AlertDetail()
+                                    detail.history_detail = HistoryDetail(
+                                                              instruction=instruct, content=command_content,
+                                                              description=r["match"]
+                                                          )
+                                    image_report = ReportEvent(id=image.id(),
+                                                          level=Level.High.value, detect_type=DetectType.Image.value,
+                                                          event_type=EventType.Risk.value,
+                                                          alert_type=AlertType.AbnormalHistory.value,
+                                                          alert_details=[detail])
+                                    report(image_report)
+                                    break
+                else:
+                    command_split = created_by.split()
+                    if command_split[0] in instruct_set:
+                        for r in rules["rules"]:
+                            if r["instruct"] == command_split[0]:
+                                if re.match(r["match"], " ".join(command_split[1:])):
+                                    detail = AlertDetail()
+                                    detail.history_detail = HistoryDetail(
+                                                              instruction=command_split[0],
+                                                              content=" ".join(command_split[1:]),
+                                                              description=r["match"]
+                                                          )
+                                    image_report = ReportEvent(id=image.id(),
+                                                          level=Level.High.value, detect_type=DetectType.Image.value,
+                                                          event_type=EventType.Risk.value,
+                                                          alert_type=AlertType.AbnormalHistory.value,
+                                                          alert_details=[detail])
+                                    report(image_report)
+                                    break
+                    else:
+                        for r in rules["rules"]:
+                            if r["instruct"] == "RUN":
+                                if re.match(r["match"], created_by):
+                                    detail = AlertDetail()
+                                    detail.history_detail = HistoryDetail(
+                                                              instruction="RUN", content=created_by,
+                                                              description=r["match"]
+                                                          )
+                                    image_report = ReportEvent(id=image.id(),
+                                                          level=Level.High.value, detect_type=DetectType.Image.value,
+                                                          event_type=EventType.Risk.value,
+                                                          alert_type=AlertType.AbnormalHistory.value,
+                                                          alert_details=[detail])
+                                    report(image_report)
+                                    break
+
+    if image_report != None:
+        report_list.append(image_report)
+
+
+@cli.resultcallback()
+def callback(result, output):
+    if output == "stdout" and len(report_list) > 0:
+        print("# ================================================================================================= #")
+        tab_print("Scan Image Total: " + str(len(report_list)))
+        tab_print("Unsafe Image List: ")
+        for r in report_list:
+            if len(r.alert_details) == 0:
+                continue
+            print(
+                "+---------------------------------------------------------------------------------------------------+")
+            tab_print("ImageName: " + r.id)
+            tab_print("Abnormal History Total: " + str(len(r.alert_details)))
+            for detail in r.alert_details:
+                if detail.history_detail:
+                    tab_print("History: " + detail.history_detail.content)
+        print("+---------------------------------------------------------------------------------------------------+")
+    elif output == "json":
+        with open("output.json", mode="w") as f:
+            f.write(jsonpickle.dumps(report_list))
 
 
 if __name__ == '__main__':
+    cli.add_info_command(manifest=command.Manifest(name="veinmind-history", author="veinmind-team", description="veinmind-history scan image abnormal history"))
     cli()

@@ -10,7 +10,7 @@ veinmind-weakpass 是由长亭科技自研的一款镜像弱口令扫描工具
 - 支持弱口令宏定义
 - 支持并发扫描弱口令
 - 支持自定义用户名以及字典
-- 支持`containerd`/`dockerd`镜像文件系统弱口令扫描
+- 支持`containerd`/`dockerd`容器运行时
 
 ## 兼容性
 
@@ -20,7 +20,22 @@ veinmind-weakpass 是由长亭科技自研的一款镜像弱口令扫描工具
 - linux/arm
 
 ## 开始之前
+
+### 安装方式一
+
 请先安装`libveinmind`，安装方法可以参考[官方文档](https://github.com/chaitin/libveinmind)
+
+### 安装方式二
+
+基于平行容器的模式，获取 `veinmind-weakpass` 的镜像并启动
+```
+docker run --rm -it --mount 'type=bind,source=/,target=/host,readonly,bind-propagation=rslave' veinmind/veinmind-weakpass scan
+```
+
+或者使用项目提供的脚本启动
+```
+chmod +x parallel-container-run.sh && ./parallel-container-run.sh scan
+```
 
 ## 使用
 
@@ -36,12 +51,12 @@ veinmind-weakpass 是由长亭科技自研的一款镜像弱口令扫描工具
 ./veinmind-weakpass scan
 ```
 
-3.指定镜像类型
+3.指定容器运行时类型
 ```
-./veinmind-weakpass scan -e [enginetype]
+./veinmind-weakpass scan --containerd
 ```
 
-镜像类型
+容器运行时类型
 - dockerd
 - containerd
 

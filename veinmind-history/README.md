@@ -18,6 +18,9 @@ veinmind-history 是由长亭科技自研的一款镜像异常历史命令扫描
 - linux/arm
 
 ## 开始之前
+
+### 安装方式一
+
 请先安装`libveinmind`，安装方法可以参考[官方文档](https://github.com/chaitin/libveinmind)
 
 然后安装`veinmind-history`所需要的`python`依赖
@@ -25,23 +28,35 @@ veinmind-history 是由长亭科技自研的一款镜像异常历史命令扫描
 pip install -r requirements.txt
 ```
 
+### 安装方式二
+
+基于平行容器的模式，获取 `veinmind-history` 的镜像并启动
+```
+docker run --rm -it --mount 'type=bind,source=/,target=/host,readonly,bind-propagation=rslave' veinmind/veinmind-history
+```
+
+或者使用项目提供的脚本启动
+```
+chmod +x parallel-container-run.sh && ./parallel-container-run.sh
+```
+
 ## 使用
 
 1.指定镜像名称或镜像ID并扫描 (需要本地存在对应的镜像)
 
 ```
-python scan.py --name [imagename/imageid]
+python scan.py scan-images [imagename/imageid]
 ```
 
 2.扫描所有本地镜像
 
 ```
-python scan.py
+python scan.py scan-images
 ```
 
-3.指定镜像类型
+3.指定容器运行时类型
 ```
-python scan.py --engine [enginetype]
+python scan.py scan-images --containerd
 ```
 
 镜像类型
@@ -50,7 +65,7 @@ python scan.py --engine [enginetype]
 
 4.指定输出类型
 ```
-python scan.py --output [outputtype]
+python scan.py --output [outputtype] scan-images
 ```
 
 ## 规则字段说明
@@ -59,7 +74,7 @@ python scan.py --output [outputtype]
 - match: 内容匹配规则，默认为正则
 
 ## 演示
-1.扫描指定镜像名称 `unsafepath`
-![](https://dinfinite.oss-cn-beijing.aliyuncs.com/image/20220308170814.png)
+1.扫描指定镜像名称 `history`
+![](https://dinfinite.oss-cn-beijing.aliyuncs.com/image/20220329111927.png)
 2.扫描所有镜像
-![](https://dinfinite.oss-cn-beijing.aliyuncs.com/image/20220308170609.png)
+![](https://dinfinite.oss-cn-beijing.aliyuncs.com/image/20220329111948.png)

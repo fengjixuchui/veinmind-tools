@@ -2,44 +2,59 @@
 import register
 import click
 import jsonpickle
-import time
+import time as timep
+import os, sys
 from common import log
 from common import tools
 from veinmind import *
 from plugins import *
 
+sys.path.append(os.path.join(os.path.dirname(__file__), "../veinmind-common/python/service"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "./veinmind-common/python/service"))
+from report import *
 
-@click.command()
-@click.option('--engine',default="docker", help="engine type you use, e.g. docker/containerd")
-@click.option('--name', default="", help="image name e.g. ubuntu:latest")
-@click.option('--output', default="stdout", help="output format e.g. stdout/json")
-def cli(engine, name, output):
-    results = []
+results = []
+start = 0
+image_ids = []
 
-    start = time.time()
-    with runtime(engine) as client:
-        if name != "":
-            image_ids = client.find_image_ids(name)
-        else:
-            image_ids = client.list_image_ids()
-        for id in image_ids:
-            image = client.open_image_by_id(id)
-            if len(image.reporefs()) > 0:
-                log.logger.info("start scan: " + image.reporefs()[0])
-            else:
-                log.logger.info("start scan: " + image.id())
-            for plugin_name, plugin in register.register.plugin_dict.items():
-                p = plugin()
-                for r in p.detect(image):
-                    results.append(r)
-    spend_time = time.time() - start
+@command.group()
+@click.option('--format', default="stdout", help="output format e.g. stdout/json")
+@click.option('--output', default='.', help="output path e.g. /tmp")
+def cli(format, output):
+    global start
+    start = timep.time()
+    pass
 
-    if output == "stdout" and len(results) > 0:
+
+@cli.image_command()
+def scan_images(image):
+    """scan image backdoor"""
+    global image_ids
+    image_ids.append(image.id())
+    if len(image.reporefs()) > 0:
+        log.info("start scan: " + image.reporefs()[0])
+    else:
+        log.info("start scan: " + image.id())
+    for plugin_name, plugin in register.register.plugin_dict.items():
+        p = plugin()
+        for r in p.detect(image):
+            results.append(r)
+            file_stat = image.stat(r.filepath)
+            detail = AlertDetail.backdoor(backdoor_detail=BackdoorDetail(r.description, FileDetail.from_stat(r.filepath, file_stat)))
+            report_event = ReportEvent(id=image.id(), level=Level.High.value,
+                                       detect_type=DetectType.Image.value,
+                                       event_type=EventType.Risk.value,
+                                       alert_type=AlertType.Backdoor.value,
+                                       alert_details=[detail])
+            report(report_event)
+
+@cli.resultcallback()
+def callback(result, format, output):
+    spend_time = timep.time() - start
+
+    if format == "stdout":
         print("# ================================================================================================= #")
-        image_id_dict = {}
-        for r in results:
-            image_id_dict[r.image_id] = 0
-        tools.tab_print("Scan Image Total: " + str(len(image_id_dict)))
+        tools.tab_print("Scan Image Total: " + str(len(image_ids)))
         tools.tab_print("Spend Time: " + spend_time.__str__() + "s")
         tools.tab_print("Backdoor Total: " + str(len(results)))
         for r in results:
@@ -50,17 +65,12 @@ def cli(engine, name, output):
         print("+---------------------------------------------------------------------------------------------------+")
         print("# ================================================================================================= #")
 
-    elif output == "json":
-        with open("output.json", mode="w") as f:
+    elif format == "json":
+        fpath = os.path.join(output, "report.json")
+        with open(fpath, mode="w") as f:
             f.write(jsonpickle.dumps(results))
 
-def runtime(engine):
-    if engine == "docker":
-        return docker.Docker()
-    elif engine == "containerd":
-        return containerd.Containerd()
-    else:
-        raise Exception("engine type doesn't match")
 
 if __name__ == '__main__':
+    cli.add_info_command(manifest=command.Manifest(name="veinmind-backdoor", author="veinmind-team", description="veinmind-backdoor scan image backdoor file"))
     cli()
