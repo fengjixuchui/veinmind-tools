@@ -2,16 +2,13 @@ package reporter
 
 import (
 	"encoding/json"
-	api "github.com/chaitin/libveinmind/go"
-	"github.com/chaitin/libveinmind/go/containerd"
-	"github.com/chaitin/libveinmind/go/docker"
-	"github.com/chaitin/libveinmind/go/plugin/log"
-	"github.com/chaitin/veinmind-tools/veinmind-common/go/service/report"
-	"github.com/pkg/errors"
 	"io"
+
+	"github.com/chaitin/libveinmind/go/plugin/log"
+	"github.com/chaitin/veinmind-common-go/service/report"
 )
 
-type reportEvent struct {
+type ReportEvent struct {
 	report.ReportEvent
 	ImageRefs []string `json:"image_refs"`
 }
@@ -19,14 +16,14 @@ type reportEvent struct {
 type Reporter struct {
 	EventChannel chan report.ReportEvent
 	closeCh      chan struct{}
-	events       []reportEvent
+	events       []ReportEvent
 }
 
 func NewReporter() (*Reporter, error) {
 	return &Reporter{
 		EventChannel: make(chan report.ReportEvent, 1<<8),
 		closeCh:      make(chan struct{}),
-		events:       []reportEvent{},
+		events:       []ReportEvent{},
 	}, nil
 }
 
@@ -70,45 +67,37 @@ func (r *Reporter) Write(writer io.Writer) error {
 	return err
 }
 
-func (r *Reporter) GetEvents() ([]reportEvent, error) {
+func WriteEvents2Log(events []ReportEvent, writer io.Writer) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	eventsBytes, err := json.MarshalIndent(events, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	_, err = writer.Write(eventsBytes)
+	if err != nil {
+		return err
+	}
+
+	_, err = writer.Write([]byte("\n"))
+	return err
+}
+
+func (r *Reporter) GetEvents() ([]ReportEvent, error) {
 	return r.events, nil
 }
 
-func (r *Reporter) convert(event report.ReportEvent) (reportEvent, error) {
-	dr, _ := docker.New()
-	cr, _ := containerd.New()
-	runtimes := []api.Runtime{dr, cr}
-	var image api.Image
-	find := false
-	for _, runtime := range runtimes {
-		if runtime != nil {
-			i, err := runtime.OpenImageByID(event.ID)
-			if err != nil {
-				continue
-			}
-			image = i
-			find = true
-			break
-		}
+func (r *Reporter) convert(event report.ReportEvent) (ReportEvent, error) {
+	if event.DetectType == report.IaC {
+		return ReportEvent{
+			ReportEvent: event,
+		}, nil
 	}
-	if !find || image == nil {
-		return reportEvent{}, errors.New("Can't get image object")
-	}
-
-	refs, err := image.RepoRefs()
-	if err != nil {
-		refs = []string{}
-		log.Error(err)
-	}
-
-	//oci, err := image.OCISpecV1()
-	//if err != nil {
-	//	oci = nil
-	//	log.Error(err)
-	//}
-
-	return reportEvent{
-		ImageRefs:   refs,
+	// todo: rollback reference or redesigned ReportEvent structure
+	return ReportEvent{
 		ReportEvent: event,
 	}, nil
 }
